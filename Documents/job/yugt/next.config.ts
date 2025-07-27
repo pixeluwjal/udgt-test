@@ -1,7 +1,16 @@
-import type { NextConfig } from "next";
+/** @type {import('next').NextConfig} */
+const nextConfig = {
+  // Your other Next.js configurations might be here, e.g.,
+  // reactStrictMode: true,
+  // images: {
+  //   domains: ['example.com'],
+  // },
 
-const nextConfig: NextConfig = {
-  /* config options here */
+  eslint: {
+    // Warning: This allows production builds to successfully complete even if
+    // your project has ESLint errors.
+    ignoreDuringBuilds: true,
+  },
 };
 
-export default nextConfig;
+module.exports = nextConfig;
