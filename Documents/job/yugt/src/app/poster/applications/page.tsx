@@ -5,36 +5,35 @@ import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/app/context/AuthContext';
 import Sidebar from '@/app/components/Sidebar';
-import mongoose from 'mongoose'; 
 import Link from 'next/link';
 
-// Updated interface to match the populated data from the API
+// ... (Your existing Application interface remains the same) ...
 interface Application {
-  _id: string;
-  job: { // Changed from jobId to job, matching API's populate
     _id: string;
-    title: string;
-    // Add other job details if needed for display, e.g., description, location, salary
-    description: string;
-    location: string;
-    salary: number;
-    postedBy: string | mongoose.Types.ObjectId;
-  };
-  applicant: { // Changed from applicantId to applicant, matching API's populate
-    _id: string;
-    username?: string; // Added username as it's populated
-    email: string;
-    candidateDetails?: { // Added candidateDetails as it's populated
-      fullName?: string;
-      phone?: string;
-      skills?: string[];
-      experience?: string;
+    job: { 
+        _id: string;
+        title: string;
+        description: string;
+        location: string;
+        salary: number;
+        postedBy: string;
     };
-  } | null; // IMPORTANT FIX: applicant can be null if populate fails or document is missing
-  status: 'pending' | 'reviewed' | 'interview' | 'accepted' | 'rejected'; // Corrected enum to match model
-  appliedAt: string;
-  resumePath?: string;
+    applicant: { 
+        _id: string;
+        username?: string;
+        email: string;
+        candidateDetails?: {
+            fullName?: string;
+            phone?: string;
+            skills?: string[];
+            experience?: string;
+        };
+        resumeGridFsId?: string;
+    } | null;
+    status: 'pending' | 'reviewed' | 'interview' | 'accepted' | 'rejected';
+    appliedAt: string;
 }
+
 
 export default function ApplicationsPage() {
   const { user, loading: authLoading, isAuthenticated, token, logout } = useAuth();
@@ -42,11 +41,39 @@ export default function ApplicationsPage() {
   const [applications, setApplications] = useState<Application[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  // Removed unused sidebar state variables
 
-  useEffect(() => {
-    // No need for window resize listener for sidebar in this context
-  }, []);
+  const fetchApplications = useCallback(async () => {
+    if (!token) {
+      setError('Authentication token missing. Please log in again.');
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await fetch('/api/applications', {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to fetch applications');
+      }
+
+      const data = await response.json();
+      setApplications(Array.isArray(data.applications) ? data.applications : []);
+    } catch (err: any) {
+      console.error('Error fetching applications:', err);
+      setError(err.message || 'An unexpected error occurred while fetching applications.');
+      setApplications([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [token]);
 
   useEffect(() => {
     if (authLoading) return;
@@ -66,43 +93,9 @@ export default function ApplicationsPage() {
     }
 
     fetchApplications();
-  }, [authLoading, isAuthenticated, user, router, token]);
+  }, [authLoading, isAuthenticated, user, router, fetchApplications]);
 
-  const fetchApplications = useCallback(async () => {
-    if (!token) {
-      setError('Authentication token missing. Please log in again.');
-      setLoading(false);
-      return;
-    }
-
-    setLoading(true);
-    setError(null);
-    try {
-      const response = await fetch('/api/applications', { 
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to fetch applications');
-      }
-
-      const data = await response.json();
-      // FIX: Access the 'applications' array from the response data object
-      setApplications(Array.isArray(data.applications) ? data.applications : []);
-    } catch (err: any) {
-      console.error('Error fetching applications:', err);
-      setError(err.message || 'An unexpected error occurred');
-      setApplications([]); // Set to empty array on error
-    } finally {
-      setLoading(false);
-    }
-  }, [token]);
-
-  const updateApplicationStatus = async (id: string, status: Application['status']) => { // Use Application['status'] for type safety
+  const updateApplicationStatus = async (id: string, status: Application['status']) => {
     try {
       const response = await fetch(`/api/applications/${id}`, {
         method: 'PATCH',
@@ -114,54 +107,95 @@ export default function ApplicationsPage() {
       });
 
       if (!response.ok) {
-        const errorData = await response.json(); // Get error message from response
+        const errorData = await response.json();
         throw new Error(errorData.error || 'Failed to update status');
       }
 
-      // Optimistically update the UI
-      setApplications(applications.map(app => 
-        app._id === id ? { 
-          ...app, 
-          status: status // Status is already correctly typed
-        } : app
-      ));
-    } catch (err: any) { // Catch the error object
-      console.error('Error updating status:', err);
-      setError(err.message || 'Failed to update application status'); // Display the specific error message
+      setApplications(prevApplications =>
+        prevApplications.map(app =>
+          app._id === id ? {
+            ...app,
+            status: status
+          } : app
+        )
+      );
+      console.log(`Application ${id} status updated to ${status}`);
+    } catch (err: any) {
+      console.error('Error updating application status:', err);
+      setError(err.message || 'Failed to update application status.');
     }
   };
 
+  // --- NEW FUNCTION TO HANDLE RESUME VIEWING ---
+  const handleViewResume = async (resumeGridFsId: string) => {
+    if (!token) {
+      setError('Authentication token missing. Please log in again.');
+      return;
+    }
+
+    try {
+      // Use fetch to send the Authorization header
+      const response = await fetch(`/api/resumes/${resumeGridFsId}`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${token}`, // Crucially send the token
+        },
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to fetch resume');
+      }
+
+      // Get the content type from the response header
+      const contentType = response.headers.get('Content-Type') || 'application/octet-stream';
+      const blob = await response.blob(); // Get the response as a Blob
+
+      // Create a URL for the Blob and open it in a new tab
+      const blobUrl = window.URL.createObjectURL(blob);
+      window.open(blobUrl, '_blank');
+
+      // Clean up the URL when done
+      window.URL.revokeObjectURL(blobUrl);
+
+    } catch (err: any) {
+      console.error('Error viewing resume:', err);
+      setError(err.message || 'An unexpected error occurred while viewing resume.');
+    }
+  };
+  // --- END NEW FUNCTION ---
+
+
   if (authLoading || !isAuthenticated || !user || user.role !== 'job_poster') {
     return (
-      <div className="flex h-screen bg-gray-50">
-        <div className="m-auto">
-          <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-indigo-500"></div>
-          <p className="mt-4 text-gray-700">Loading applications...</p> {/* Added loading text */}
+      <div className="flex h-screen bg-gray-50 justify-center items-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-indigo-500 mx-auto"></div>
+          <p className="mt-4 text-gray-700">Loading applications...</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="flex h-screen bg-gradient-to-br from-blue-50 to-indigo-100 overflow-hidden font-inter"> {/* Applied gradient background */}
+    <div className="flex h-screen bg-gradient-to-br from-blue-50 to-indigo-100 overflow-hidden font-inter">
       <Sidebar userRole={user.role} onLogout={logout} />
 
       <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Mobile header (simplified, as logout is now in sidebar) */}
         <div className="md:hidden bg-white shadow-sm p-4 flex justify-between items-center">
           <span className="text-lg font-bold text-indigo-600">Job Applications</span>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4 md:p-6"> {/* Removed redundant bg-gradient */}
+        <div className="flex-1 overflow-y-auto p-4 md:p-6">
           <div className="max-w-7xl mx-auto">
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8 gap-4"> {/* Adjusted alignment and spacing */}
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8 gap-4">
               <div>
-                <h1 className="text-3xl md:text-4xl font-extrabold text-gray-800">Job Applications</h1> {/* Increased font size */}
-                <p className="text-gray-500 text-lg mt-2">Review and manage applications for your posted jobs</p> {/* Adjusted text color and size */}
+                <h1 className="text-3xl md:text-4xl font-extrabold text-gray-800">Job Applications</h1>
+                <p className="text-gray-500 text-lg mt-2">Review and manage applications for your posted jobs</p>
               </div>
-              <Link 
-                href="/poster/dashboard" 
-                className="px-4 py-2 bg-white border border-gray-300 rounded-lg shadow-sm text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-all duration-200 flex items-center justify-center w-full sm:w-auto" // Added flex for centering, full width on mobile
+              <Link
+                href="/poster/dashboard"
+                className="px-4 py-2 bg-white border border-gray-300 rounded-lg shadow-sm text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-all duration-200 flex items-center justify-center w-full sm:w-auto"
               >
                 <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
@@ -171,7 +205,7 @@ export default function ApplicationsPage() {
             </div>
 
             {error && (
-              <div className="bg-red-50 border-l-4 border-red-500 p-4 mb-6 rounded-r-lg shadow-md"> {/* Added shadow */}
+              <div className="bg-red-50 border-l-4 border-red-500 p-4 mb-6 rounded-r-lg shadow-md" role="alert">
                 <div className="flex">
                   <div className="flex-shrink-0">
                     <svg className="h-5 w-5 text-red-500" fill="currentColor" viewBox="0 0 20 20">
@@ -179,28 +213,28 @@ export default function ApplicationsPage() {
                     </svg>
                   </div>
                   <div className="ml-3">
-                    <p className="text-sm text-red-700 font-medium">{error}</p> {/* Added font-medium */}
+                    <p className="text-sm text-red-700 font-medium">{error}</p>
                   </div>
                 </div>
               </div>
             )}
 
             {loading ? (
-              <div className="flex justify-center items-center py-12 bg-white rounded-xl shadow-md"> {/* Added styling to loading state */}
+              <div className="flex justify-center items-center py-12 bg-white rounded-xl shadow-md">
                 <div className="animate-spin rounded-full h-10 w-10 border-t-2 border-b-2 border-indigo-500"></div>
                 <p className="ml-4 text-gray-700">Loading applications...</p>
               </div>
             ) : applications.length === 0 ? (
-              <div className="bg-white rounded-xl shadow-md p-8 text-center border border-gray-100"> {/* Added shadow and border */}
-                <svg className="mx-auto h-16 w-16 text-gray-400 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"> {/* Increased icon size */}
+              <div className="bg-white rounded-xl shadow-md p-8 text-center border border-gray-100">
+                <svg className="mx-auto h-16 w-16 text-gray-400 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
                 </svg>
-                <h3 className="mt-2 text-xl font-semibold text-gray-900">No applications yet</h3> {/* Increased font size */}
-                <p className="mt-1 text-base text-gray-500">You haven't received any applications for your posted jobs.</p> {/* Increased font size */}
+                <h3 className="mt-2 text-xl font-semibold text-gray-900">No applications yet</h3>
+                <p className="mt-1 text-base text-gray-500">You haven't received any applications for your posted jobs.</p>
                 <div className="mt-6">
                   <Link
                     href="/poster/new-job"
-                    className="inline-flex items-center px-6 py-3 border border-transparent shadow-sm text-base font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-all duration-200" // Increased padding and font size
+                    className="inline-flex items-center px-6 py-3 border border-transparent shadow-sm text-base font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-all duration-200"
                   >
                     <svg className="-ml-1 mr-2 h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
@@ -210,7 +244,7 @@ export default function ApplicationsPage() {
                 </div>
               </div>
             ) : (
-              <div className="bg-white shadow-md rounded-xl overflow-hidden border border-gray-100"> {/* Added shadow and border */}
+              <div className="bg-white shadow-md rounded-xl overflow-hidden border border-gray-100">
                 <div className="overflow-x-auto">
                   <table className="min-w-full divide-y divide-gray-200">
                     <thead className="bg-gray-50">
@@ -236,14 +270,13 @@ export default function ApplicationsPage() {
                       {applications.map((application) => (
                         <tr key={application._id} className="hover:bg-gray-50">
                           <td className="px-6 py-4 whitespace-nowrap">
-                            <div className="text-sm font-medium text-gray-900">{application.job.title}</div> {/* Access title from job object */}
+                            <div className="text-sm font-medium text-gray-900">{application.job.title}</div>
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap">
                             <div className="flex items-center">
                               <div>
-                                {/* FIX: Add optional chaining for 'applicant' itself */}
-                                <div className="text-sm font-medium text-gray-900">{application.applicant?.candidateDetails?.fullName || application.applicant?.username || 'N/A'}</div> 
-                                <div className="text-sm text-gray-500">{application.applicant?.email || 'N/A'}</div> {/* Also add optional chaining for email */}
+                                <div className="text-sm font-medium text-gray-900">{application.applicant?.candidateDetails?.fullName || application.applicant?.username || 'N/A'}</div>
+                                <div className="text-sm text-gray-500">{application.applicant?.email || 'N/A'}</div>
                               </div>
                             </div>
                           </td>
@@ -254,40 +287,40 @@ export default function ApplicationsPage() {
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap">
                             <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                              application.status === 'accepted' ? 'bg-green-100 text-green-800' : // Changed 'hired' to 'accepted'
+                              application.status === 'accepted' ? 'bg-green-100 text-green-800' :
                               application.status === 'rejected' ? 'bg-red-100 text-red-800' :
                               application.status === 'interview' ? 'bg-blue-100 text-blue-800' :
-                              application.status === 'reviewed' ? 'bg-purple-100 text-purple-800' : // Added reviewed status color
+                              application.status === 'reviewed' ? 'bg-purple-100 text-purple-800' :
                               'bg-yellow-100 text-yellow-800'
                             }`}>
-                              {application.status.charAt(0).toUpperCase() + application.status.slice(1)} {/* Capitalize status */}
+                              {application.status.charAt(0).toUpperCase() + application.status.slice(1)}
                             </span>
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                            <div className="flex space-x-2 items-center"> {/* Added items-center for vertical alignment */}
-                              {application.resumePath && (
-                                <a
-                                  href={application.resumePath}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="text-indigo-600 hover:text-indigo-900 flex items-center" // Added flex for icon alignment
+                            <div className="flex space-x-2 items-center">
+                              {/* Change to a button/span with onClick for fetching the resume */}
+                              {application.applicant?.resumeGridFsId && (
+                                <button
+                                  onClick={() => handleViewResume(application.applicant!.resumeGridFsId!)}
+                                  className="text-indigo-600 hover:text-indigo-900 flex items-center bg-transparent border-none p-0 cursor-pointer"
+                                  title="View Applicant's Resume"
                                 >
                                   <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 13l-3 3m0 0l-3-3m3 3V8m0 13a9 9 0 110-18 9 9 0 010 18z" />
                                   </svg>
                                   Resume
-                                </a>
+                                </button>
                               )}
                               <select
                                 value={application.status}
-                                onChange={(e) => updateApplicationStatus(application._id, e.target.value as Application['status'])} // Cast value to correct type
-                                className="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md shadow-sm" // Added shadow
+                                onChange={(e) => updateApplicationStatus(application._id, e.target.value as Application['status'])}
+                                className="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md shadow-sm"
                               >
                                 <option value="pending">Pending</option>
                                 <option value="reviewed">Reviewed</option>
                                 <option value="interview">Interview</option>
                                 <option value="rejected">Rejected</option>
-                                <option value="accepted">Accepted</option> {/* Changed 'hired' to 'accepted' */}
+                                <option value="accepted">Accepted</option>
                               </select>
                             </div>
                           </td>

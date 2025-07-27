@@ -1,143 +1,79 @@
-import mongoose, { Schema, Document, Types } from "mongoose";
-import bcrypt from "bcryptjs";
+// models/User.ts
 
-// 1. Define types
-export type OnboardingStatus = "not_started" | "in_progress" | "completed" | "pending";
-export type UserRole = "admin" | "job_poster" | "job_seeker" | "job_referrer";
-export type ReferralStatus = "Pending Onboarding" | "Onboarding Complete";
+import mongoose, { Schema, Document, Types } from 'mongoose';
 
-// 2. Define base interface without Mongoose-specific fields
+// Define your interfaces
 export interface IUserBase {
   username: string;
   email: string;
-  role: UserRole;
+  password?: string; // Optional for security, managed by auth
+  role: 'job_seeker' | 'job_poster' | 'admin';
   isSuperAdmin: boolean;
   firstLogin: boolean;
-  createdBy?: Types.ObjectId;
-  referralCode?: string;
-  referralCodeExpiresAt?: Date;
-  onboardingStatus?: OnboardingStatus;
-  resumePath?: string;
+  createdBy?: Types.ObjectId; // Optional: ID of user who created this user (e.g., admin)
+  onboardingStatus: 'pending' | 'completed';
+  
+  // Add resumeGridFsId here in the base interface
+  resumeGridFsId?: Types.ObjectId; 
+
   candidateDetails?: {
     fullName?: string;
     phone?: string;
     skills?: string[];
     experience?: string;
   };
-  referredBy?: Types.ObjectId;
-  referralStatus?: ReferralStatus;
-  referredOn?: Date;
+  jobPosterDetails?: {
+    companyName?: string;
+    // ... other job poster specific fields
+  };
 }
 
-// 3. Define document interface that extends Mongoose Document
 export interface IUser extends IUserBase, Document {
-  password: string;
-  _id: Types.ObjectId;
-  createdAt: Date;
-  updatedAt: Date;
-  __v?: number;
+  // Mongoose adds _id, createdAt, updatedAt automatically with timestamps: true
 }
 
-// 4. Define schema
+// Define your Mongoose Schema
 const UserSchema: Schema<IUser> = new Schema(
   {
-    username: { 
-      type: String, 
-      required: true, 
-      unique: true, 
-      trim: true 
-    },
-    email: {
-      type: String,
-      required: true,
-      unique: true,
-      trim: true,
-      lowercase: true,
-      match: [/^[^\s@]+@[^\s@]+\.[^\s@]+$/, "Invalid email format"]
-    },
-    password: { 
-      type: String, 
-      required: true, 
-      select: false,
-      minlength: 8
-    },
-    role: {
-      type: String,
-      enum: ["admin", "job_poster", "job_seeker", "job_referrer"],
-      required: true,
-      default: "job_seeker"
-    },
-    isSuperAdmin: { 
-      type: Boolean, 
-      default: false 
-    },
-    firstLogin: { 
-      type: Boolean, 
-      default: true 
-    },
-    createdBy: {
-      type: Schema.Types.ObjectId,
-      ref: "User"
-    },
-    referralCode: {
-      type: String,
-      unique: true,
-      sparse: true
-    },
-    referralCodeExpiresAt: Date,
-    onboardingStatus: {
-      type: String,
-      enum: ["not_started", "in_progress", "completed", "pending"],
-      default: "not_started"
-    },
-    resumePath: String,
+    username: { type: String, required: true, unique: true },
+    email: { type: String, required: true, unique: true },
+    password: { type: String, required: true, select: false }, // password not returned by default
+    role: { type: String, enum: ['job_seeker', 'job_poster', 'admin'], default: 'job_seeker' },
+    isSuperAdmin: { type: Boolean, default: false },
+    firstLogin: { type: Boolean, default: true },
+    createdBy: { type: Schema.Types.ObjectId, ref: 'User' },
+    onboardingStatus: { type: String, enum: ['pending', 'completed'], default: 'pending' },
+    
+    // --- ADD THIS LINE ---
+    resumeGridFsId: { type: Schema.Types.ObjectId }, // Define it here
+    // --- END ADD THIS LINE ---
+
     candidateDetails: {
-      fullName: String,
-      phone: String,
-      skills: [String],
-      experience: String
+      fullName: { type: String },
+      phone: { type: String },
+      skills: [{ type: String }],
+      experience: { type: String },
     },
-    referredBy: {
-      type: Schema.Types.ObjectId,
-      ref: "User",
-      index: true
+    jobPosterDetails: {
+      companyName: { type: String },
+      // ...
     },
-    referralStatus: {
-      type: String,
-      enum: ["Pending Onboarding", "Onboarding Complete"]
-    },
-    referredOn: Date
   },
   {
-    timestamps: true,
-    toJSON: {
-      virtuals: true,
-      transform: (doc, ret) => {
-        const { password, __v, ...user } = ret;
-        return {
-          ...user,
-          _id: user._id.toString()
-        };
-      }
-    }
+    timestamps: true, // Adds createdAt and updatedAt fields
   }
 );
 
-// 5. Password hashing middleware
-UserSchema.pre<IUser>("save", async function (next) {
-  if (!this.isModified("password")) return next();
-  
-  try {
-    const salt = await bcrypt.genSalt(10);
-    this.password = await bcrypt.hash(this.password, salt);
-    next();
-  } catch (err) {
-    next(err as Error);
+// Add pre-save hook for password hashing (if you have one)
+UserSchema.pre('save', async function (next) {
+  if (this.isModified('password')) {
+    this.password = await (require('bcryptjs').hash)(this.password, 10);
   }
+  next();
 });
 
-// 6. Model export
-const UserModel = mongoose.models.User as mongoose.Model<IUser> || 
+// Create and export the model
+const UserModel = mongoose.models.User as mongoose.Model<IUser> ||
                   mongoose.model<IUser>("User", UserSchema);
 
 export default UserModel;

@@ -1,5 +1,4 @@
-// pages/api/applications.ts (or app/api/applications/route.ts)
-
+// app/api/applications/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import dbConnect from '@/lib/dbConnect';
 import Application from '@/models/Application'; // Assuming this path is correct
@@ -14,24 +13,29 @@ export async function POST(request: NextRequest) {
   // Authenticate and authorize: only job_seeker can create applications
   const authResult = await authMiddleware(request, 'job_seeker');
   if (!authResult.success) {
+    console.warn(`API: Application POST failed auth: ${authResult.message}`);
     return NextResponse.json({ error: authResult.message }, { status: authResult.status });
   }
 
-  if (!authResult.user) {
+  // Ensure authenticatedUser is not undefined after successful auth
+  const authenticatedUser = authResult.user;
+  if (!authenticatedUser) {
     console.error('API: Auth successful but user object is missing for POST.');
     return NextResponse.json({ error: 'Authentication error: User data missing.' }, { status: 500 });
   }
-  const { id: applicantIdFromToken } = authResult.user;
+  const { id: applicantIdFromToken } = authenticatedUser;
 
   try {
     const { jobId } = await request.json();
 
     if (!jobId || !mongoose.isValidObjectId(jobId)) {
+      console.warn(`API: Invalid Job ID provided: ${jobId}`);
       return NextResponse.json({ error: 'Valid Job ID is required' }, { status: 400 });
     }
 
     const job = await Job.findById(jobId);
     if (!job) {
+      console.warn(`API: Job not found for ID: ${jobId}`);
       return NextResponse.json({ error: 'Job not found' }, { status: 404 });
     }
 
@@ -41,26 +45,38 @@ export async function POST(request: NextRequest) {
     });
 
     if (existingApplication) {
+      console.warn(`API: User ${applicantIdFromToken} already applied to job ${jobId}.`);
       return NextResponse.json({ error: 'Already applied' }, { status: 409 });
     }
 
     const applicant = await User.findById(applicantIdFromToken);
-    if (!applicant?.resumePath) {
+    
+    // --- START FIX for resume check ---
+    // Check for resumeGridFsId instead of resumePath
+    if (!applicant?.resumeGridFsId) {
+      console.warn(`API: Applicant ${applicantIdFromToken} attempting to apply without a resume.`);
       return NextResponse.json(
         { error: 'Resume required', redirect: '/seeker/profile' },
         { status: 400 }
       );
     }
+    // --- END FIX for resume check ---
 
     const newApplication = new Application({
       job: jobId,
       applicant: applicantIdFromToken,
-      resumePath: applicant.resumePath,
+      // --- START FIX for resumePath assignment ---
+      // Store the GridFS ID (converted to string) in the resumePath field
+      // This assumes Application model still has 'resumePath: String'
+      // Ideally, update Application model to have 'resumeGridFsId: ObjectId'
+      resumePath: applicant.resumeGridFsId.toString(), 
+      // --- END FIX for resumePath assignment ---
       status: 'pending',
       appliedAt: new Date(),
     });
 
     await newApplication.save();
+    console.log(`API: New application created for Job ${jobId} by Applicant ${applicantIdFromToken}.`);
 
     return NextResponse.json(
       {
@@ -72,7 +88,7 @@ export async function POST(request: NextRequest) {
     );
 
   } catch (error: any) {
-    console.error('Application POST error:', error);
+    console.error('API: Application POST error:', error);
     return NextResponse.json(
       { error: error.message || 'Server error' },
       { status: 500 }
@@ -87,14 +103,17 @@ export async function GET(request: NextRequest) {
   const authResult = await authMiddleware(request, ['admin', 'job_poster', 'job_seeker']);
 
   if (!authResult.success) {
+    console.warn(`API: Application GET failed auth: ${authResult.message}`);
     return NextResponse.json({ error: authResult.message }, { status: authResult.status });
   }
 
-  if (!authResult.user) {
+  // Ensure authenticatedUser is not undefined after successful auth
+  const authenticatedUser = authResult.user;
+  if (!authenticatedUser) {
     console.error('API: Auth successful but user object is missing for GET.');
     return NextResponse.json({ error: 'Authentication error: User data missing.' }, { status: 500 });
   }
-  const { id: authenticatedUserId, role } = authResult.user;
+  const { id: authenticatedUserId, role } = authenticatedUser;
   const { searchParams } = new URL(request.url);
 
   try {
@@ -103,12 +122,8 @@ export async function GET(request: NextRequest) {
     // 1. Determine the base applicant/job filter based on role
     if (role === 'job_seeker') {
       // A job seeker can ONLY view their own applications.
-      // We explicitly set the applicant filter here and IGNORE any applicantIdParam from the client.
       query.applicant = new mongoose.Types.ObjectId(authenticatedUserId);
       console.log(`API: Job Seeker ${authenticatedUserId} fetching their own applications.`);
-
-      // If a job seeker tries to send applicantIdParam, it's ignored or handled by the main filter.
-      // No need for an explicit error here, as their query is already locked to their ID.
     } else if (role === 'job_poster') {
       // A job poster can view applications for jobs they posted
       const postedJobs = await Job.find({ postedBy: authenticatedUserId }).select('_id');
@@ -136,7 +151,6 @@ export async function GET(request: NextRequest) {
         console.log(`API: Admin filtering applications by applicant ID: ${applicantIdParam}`);
       }
     } else {
-      // For unhandled roles, deny by default. This should ideally be caught by authMiddleware.
       console.warn(`API: Unauthorized role '${role}' attempting to access applications GET.`);
       return NextResponse.json({ error: 'Unauthorized role for this action' }, { status: 403 });
     }
@@ -183,7 +197,7 @@ export async function GET(request: NextRequest) {
 
     const applications = await Application.find(query)
       .populate('job', '_id title company location salary')
-      .populate('applicant', 'username email candidateDetails.fullName candidateDetails.phone candidateDetails.skills candidateDetails.experience')
+      .populate('applicant', 'username email candidateDetails.fullName candidateDetails.phone candidateDetails.skills candidateDetails.experience resumeGridFsId') // --- ADDED resumeGridFsId HERE ---
       .sort({ [sortBy]: sortOrder })
       .skip(skip)
       .limit(limit)
@@ -203,7 +217,7 @@ export async function GET(request: NextRequest) {
     );
 
   } catch (error: any) {
-    console.error('Fetch applications GET error:', error);
+    console.error('API: Fetch applications GET error:', error);
     return NextResponse.json(
       { error: error.message || 'Server error' },
       { status: 500 }
