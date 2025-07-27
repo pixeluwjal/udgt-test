@@ -1,20 +1,18 @@
 // src/app/api/applications/[id]/route.ts
 
 import { NextRequest, NextResponse } from 'next/server';
-import { authMiddleware } from '@/lib/authMiddleware';
+import { authMiddleware } from '@/lib/authMiddleware'; // Corrected path
 import Application from '@/models/Application';
-import Job from '@/models/Job'; // Assuming Job model is needed for population
-import User from '@/models/User'; // Assuming User model is needed for population
+import Job from '@/models/Job';
+import User from '@/models/User';
 import dbConnect from '@/lib/dbConnect';
 import mongoose from 'mongoose';
-
-// You might also have a GET or DELETE here, make sure their signatures are correct too if they have params
 
 // PATCH /api/applications/:id
 // This function handles updating an application's status
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: { id: string } } // <-- THIS IS THE CORRECT AND CRITICAL PART
+  { params }: { params: { id: string } } // Correct signature
 ) {
   await dbConnect();
   console.log(`\n--- API: /api/applications/${params.id} PATCH - Request received ---`);
@@ -28,16 +26,15 @@ export async function PATCH(
     );
   }
 
-  const { id: applicationId } = params; // Get the application ID from the URL params
-  const { user } = authResult; // Authenticated user
-  const { status, remarks } = await request.json(); // Get status and remarks from request body
+  const { id: applicationId } = params;
+  const { user } = authResult;
+  const { status, remarks } = await request.json();
 
   if (!mongoose.isValidObjectId(applicationId)) {
     console.warn(`API: Invalid Application ID: ${applicationId}`);
     return NextResponse.json({ message: 'Invalid Application ID.' }, { status: 400 });
   }
 
-  // Define allowed statuses to prevent arbitrary updates
   const allowedStatuses = ['Pending', 'Reviewed', 'Interviewing', 'Offer Extended', 'Hired', 'Rejected'];
   if (status && !allowedStatuses.includes(status)) {
     console.warn(`API: Invalid status provided: ${status}`);
@@ -48,7 +45,7 @@ export async function PATCH(
     let application = await Application.findById(applicationId)
       .populate({
         path: 'job',
-        select: 'postedBy' // Only need postedBy to check ownership
+        select: 'postedBy'
       })
       .lean();
 
@@ -57,17 +54,15 @@ export async function PATCH(
       return NextResponse.json({ message: 'Application not found.' }, { status: 404 });
     }
 
-    // Authorization check: Only the job poster or an admin can update
-    const jobPostedBy = (application.job as any)?.postedBy; // Access job.postedBy
+    const jobPostedBy = (application.job as any)?.postedBy;
     if (user.role === 'job_poster' && jobPostedBy && jobPostedBy.toString() !== user.id) {
       console.warn(`API: Job Poster ${user.id} not authorized to update application ${applicationId} for job posted by ${jobPostedBy}.`);
       return NextResponse.json({ message: 'Forbidden: You are not authorized to update this application.' }, { status: 403 });
     }
-    // Admin can update any application, no extra check needed here for admin
 
     const updateFields: any = {};
     if (status) updateFields.status = status;
-    if (remarks !== undefined) updateFields.remarks = remarks; // Allow clearing remarks by setting to null/empty string
+    if (remarks !== undefined) updateFields.remarks = remarks;
 
     const updatedApplication = await Application.findByIdAndUpdate(
       applicationId,
@@ -76,13 +71,13 @@ export async function PATCH(
     )
     .populate({
       path: 'job',
-      select: 'title company' // Select fields relevant for response
+      select: 'title company'
     })
     .populate({
       path: 'applicant',
-      select: 'email username candidateDetails.fullName' // Select fields relevant for response
+      select: 'email username candidateDetails.fullName'
     })
-    .lean(); // Use lean() for performance
+    .lean();
 
     if (!updatedApplication) {
       console.error(`API: Failed to find and update application ${applicationId} after initial find.`);
@@ -100,7 +95,6 @@ export async function PATCH(
 
   } catch (error: any) {
     console.error(`API Error in PATCH /api/applications/${applicationId}:`, error);
-    // Add specific error handling if needed, e.g., for validation errors
     if (error.name === 'ValidationError') {
       return NextResponse.json({ message: error.message }, { status: 400 });
     }
@@ -108,11 +102,10 @@ export async function PATCH(
   }
 }
 
-// You likely also have a GET and/or DELETE in this file
-// Example GET:
+// GET /api/applications/:id
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: { id: string } } // Correct signature
 ) {
   await dbConnect();
   console.log(`\n--- API: /api/applications/${params.id} GET - Request received ---`);
@@ -135,11 +128,11 @@ export async function GET(
     let application = await Application.findById(applicationId)
       .populate({
         path: 'job',
-        select: 'title company postedBy' // Populate job details
+        select: 'title company postedBy'
       })
       .populate({
         path: 'applicant',
-        select: 'email username candidateDetails.fullName' // Populate applicant details
+        select: 'email username candidateDetails.fullName'
       })
       .lean();
 
@@ -148,10 +141,6 @@ export async function GET(
       return NextResponse.json({ message: 'Application not found.' }, { status: 404 });
     }
 
-    // Authorization check:
-    // 1. Admin can view any application
-    // 2. Job Poster can view if they posted the job related to the application
-    // 3. Job Seeker can view if they are the applicant
     const jobPostedBy = (application.job as any)?.postedBy;
     const applicantId = (application.applicant as any)?._id;
 
@@ -172,15 +161,15 @@ export async function GET(
   }
 }
 
-// Example DELETE:
+// DELETE /api/applications/:id
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: { id: string } } // Correct signature
 ) {
   await dbConnect();
   console.log(`\n--- API: /api/applications/${params.id} DELETE - Request received ---`);
 
-  const authResult = await authMiddleware(request, ['job_poster', 'admin']); // Only job poster or admin can delete
+  const authResult = await authMiddleware(request, ['job_poster', 'admin']);
   if (!authResult.success || !authResult.user) {
     console.warn('API: Delete application failed: Authentication failed.', authResult.message);
     return NextResponse.json({ error: authResult.message || 'Authentication failed' }, { status: authResult.status || 401 });
@@ -207,7 +196,6 @@ export async function DELETE(
       return NextResponse.json({ message: 'Application not found.' }, { status: 404 });
     }
 
-    // Authorization check for delete
     const jobPostedBy = (application.job as any)?.postedBy;
     if (user.role === 'job_poster' && jobPostedBy && jobPostedBy.toString() !== user.id) {
       console.warn(`API: Job Poster ${user.id} not authorized to delete application ${applicationId} for job posted by ${jobPostedBy}.`);
