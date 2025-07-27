@@ -1,18 +1,16 @@
 // src/app/api/applications/[id]/route.ts
 
 import { NextRequest, NextResponse } from 'next/server';
-import { authMiddleware } from '@/lib/authMiddleware'; // Corrected path
+import { authMiddleware } from '@/lib/authMiddleware';
 import Application from '@/models/Application';
 import Job from '@/models/Job';
 import User from '@/models/User';
 import dbConnect from '@/lib/dbConnect';
 import mongoose from 'mongoose';
 
-// PATCH /api/applications/:id
-// This function handles updating an application's status
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: { id: string } } // Correct signature
+  { params }: { params: { id: string } }
 ) {
   await dbConnect();
   console.log(`\n--- API: /api/applications/${params.id} PATCH - Request received ---`);
@@ -102,10 +100,9 @@ export async function PATCH(
   }
 }
 
-// GET /api/applications/:id
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } } // Correct signature
+  { params }: { params: { id: string } }
 ) {
   await dbConnect();
   console.log(`\n--- API: /api/applications/${params.id} GET - Request received ---`);
@@ -161,10 +158,9 @@ export async function GET(
   }
 }
 
-// DELETE /api/applications/:id
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } } // Correct signature
+  { params }: { params: { id: string } }
 ) {
   await dbConnect();
   console.log(`\n--- API: /api/applications/${params.id} DELETE - Request received ---`);
